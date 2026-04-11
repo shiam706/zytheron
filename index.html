@@ -285,12 +285,24 @@ textarea.inp{resize:vertical;min-height:68px}
   <div class="pgw" id="uPgW">
     <div id="pgHome">
       <div id="winSec"></div>
-      <div class="sec">🎮 Choose Game</div>
-      <div id="gameGrid" class="gg"></div>
-      <div id="tournSec" style="display:none;margin-top:6px">
+      <!-- Step 1: Choose Game -->
+      <div id="stepGame">
+        <div class="sec">🎮 Choose Game</div>
+        <div id="gameGrid" class="gg"></div>
+      </div>
+      <!-- Step 2: Choose Category -->
+      <div id="stepCat" style="display:none">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div class="sec" style="margin:0" id="catTitle">Categories</div>
+          <span style="font-size:13px;color:var(--g2);cursor:pointer" onclick="backToGames()">← Games</span>
+        </div>
+        <div id="catGrid" class="gg"></div>
+      </div>
+      <!-- Step 3: Tournaments -->
+      <div id="stepTourn" style="display:none;margin-top:6px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
           <div class="sec" style="margin:0" id="tournTitle">Tournaments</div>
-          <span style="font-size:13px;color:var(--g2);cursor:pointer" onclick="clearGame()">← Back</span>
+          <span style="font-size:13px;color:var(--g2);cursor:pointer" onclick="backToCats()">← Categories</span>
         </div>
         <div id="tList"></div>
       </div>
@@ -457,7 +469,7 @@ const DB={
 };
 
 // Cache
-const C={games:[],tournaments:[],deposits:[],withdrawals:[],chats:[],polls:[],methods:[],users:[]};
+const C={games:[],tournaments:[],deposits:[],withdrawals:[],chats:[],polls:[],methods:[],users:[],categories:[]};
 let CU=null,selGId=null,admCUID=null,autoRefT=null,tmrT=null,selDM=null,selWM=null;
 let LA=(()=>{try{const s=localStorage.getItem('zy_la');return s?JSON.parse(s):{count:0,until:0};}catch{return{count:0,until:0};}})();
 function saveLA(){try{localStorage.setItem('zy_la',JSON.stringify(LA));}catch{}}
@@ -563,7 +575,7 @@ async function loadAll(){
   try{
     const[g,t,dep,w,ch,p,m]=await Promise.all([
       DB.get('zy_games','order=sort_order'),
-      DB.get('zy_tournaments','order=created_at.desc'),
+      DB.get('zy_tournaments','order=start_time.asc.nullsfirst,created_at.asc'),
       DB.get('zy_deposits','order=created_at.desc'),
       DB.get('zy_withdrawals','order=created_at.desc'),
       DB.get('zy_chats','order=created_at.asc'),
@@ -677,7 +689,7 @@ function startTimers(){
     C.tournaments.forEach(t=>{
       if(t.status==='upcoming'&&t.start_time){
         const d=new Date(t.start_time)-Date.now();
-        if(d<=0){t.status='live';DB.upd('zy_tournaments','id=eq.'+t.id,{status:'live'});if(selGId)renderTL(selGId);}
+        if(d<=0){t.status='live';DB.upd('zy_tournaments','id=eq.'+t.id,{status:'live'});if(selGId)renderTL(selGId,selCatId);}
         else if(d<=300000&&!t.notified&&t.joined?.includes(CU?.id)){showBanner('⏰ '+t.name+' starts in 5 min!');t.notified=true;DB.upd('zy_tournaments','id=eq.'+t.id,{notified:true});}
       }
     });
@@ -686,15 +698,64 @@ function startTimers(){
 }
 
 // ── GAMES
+let selCatId=null;
 function renderGG(){
-  document.getElementById('gameGrid').innerHTML=C.games.filter(g=>g.active).map(g=>`<div class="gb${selGId===g.id?' sel':''}" onclick="selGame('${g.id}')"><div class="gi">${g.icon}</div><div class="gn">${g.name}</div></div>`).join('');
-  if(selGId){document.getElementById('tournSec').style.display='block';const g=C.games.find(x=>x.id===selGId);if(g)document.getElementById('tournTitle').textContent=g.icon+' '+g.name;}
+  const games=C.games.filter(g=>g.active);
+  document.getElementById('gameGrid').innerHTML=games.map(g=>`<div class="gb${selGId===g.id?' sel':''}" onclick="selGame('${g.id}')"><div class="gi">${g.icon}</div><div class="gn">${g.name}</div></div>`).join('');
 }
-function selGame(gid){selGId=gid;renderGG();document.getElementById('tournSec').style.display='block';const g=C.games.find(x=>x.id===gid);if(g)document.getElementById('tournTitle').textContent=g.icon+' '+g.name;renderTL(gid);setTimeout(()=>document.getElementById('tournSec').scrollIntoView({behavior:'smooth',block:'start'}),50);}
-function clearGame(){selGId=null;document.getElementById('tournSec').style.display='none';renderGG();}
+function selGame(gid){
+  selGId=gid;selCatId=null;
+  const g=C.games.find(x=>x.id===gid);
+  const cats=C.categories.filter(c=>c.game_id===gid&&c.active!==false);
+  if(cats.length===0){
+    // No categories - go straight to tournaments
+    showTournStep(gid,null);
+    return;
+  }
+  // Show category step
+  document.getElementById('stepGame').style.display='none';
+  document.getElementById('stepCat').style.display='block';
+  document.getElementById('stepTourn').style.display='none';
+  document.getElementById('catTitle').textContent=(g?g.icon+' '+g.name:'')+' — Categories';
+  document.getElementById('catGrid').innerHTML=cats.map(c=>`<div class="gb" onclick="selCat('${c.id}')"><div class="gi">${c.icon||'🏆'}</div><div class="gn">${c.name}</div></div>`).join('');
+  renderGG();
+}
+function selCat(catId){
+  selCatId=catId;
+  showTournStep(selGId,catId);
+}
+function showTournStep(gid,catId){
+  document.getElementById('stepGame').style.display='none';
+  document.getElementById('stepCat').style.display='none';
+  document.getElementById('stepTourn').style.display='block';
+  const g=C.games.find(x=>x.id===gid);
+  const cat=catId?C.categories.find(x=>x.id===catId):null;
+  document.getElementById('tournTitle').textContent=(g?g.icon+' '+g.name:'')+(cat?' — '+cat.name:'');
+  renderTL(gid,catId);
+  setTimeout(()=>document.getElementById('stepTourn').scrollIntoView({behavior:'smooth',block:'start'}),50);
+}
+function backToGames(){
+  selGId=null;selCatId=null;
+  document.getElementById('stepGame').style.display='block';
+  document.getElementById('stepCat').style.display='none';
+  document.getElementById('stepTourn').style.display='none';
+  renderGG();
+}
+function backToCats(){
+  selCatId=null;
+  document.getElementById('stepCat').style.display='block';
+  document.getElementById('stepTourn').style.display='none';
+}
+function clearGame(){backToGames();}
 
-function renderTL(gid){
-  const ts=C.tournaments.filter(t=>t.game_id===gid);
+function renderTL(gid,catId){
+  let ts=C.tournaments.filter(t=>t.game_id===gid);
+  if(catId)ts=ts.filter(t=>t.category_id===catId);
+  // Sort by start_time ascending
+  ts=ts.sort((a,b)=>{
+    if(!a.start_time)return 1;if(!b.start_time)return -1;
+    return new Date(a.start_time)-new Date(b.start_time);
+  });
   document.getElementById('winSec').innerHTML=ts.filter(t=>t.winner).map(t=>`<div class="wbar"><span style="font-size:22px">🏆</span><div><div style="font-size:14px;font-weight:700;color:#4dde80">${t.name}</div><div style="font-size:12px;color:#2aad50">🥇 ${t.winner}</div></div></div>`).join('');
   const el=document.getElementById('tList');
   if(!ts.length){el.innerHTML='<div class="empty">No tournaments yet</div>';return;}
@@ -832,7 +893,12 @@ async function showPg(p){
   if(p==='voting')renderVoting();
   if(p==='support')renderUChat();
   if(p==='profile')renderProfile();
-  if(p==='home')renderGG();
+  if(p==='home'){
+    document.getElementById('stepGame').style.display='block';
+    document.getElementById('stepCat').style.display='none';
+    document.getElementById('stepTourn').style.display='none';
+    renderGG();
+  }
 }
 
 // ── ADMIN
@@ -842,39 +908,193 @@ function swAdm(tab){document.querySelectorAll('#ats .at2').forEach((el,i)=>el.cl
 
 // TOURNAMENTS ADMIN
 function rAdmT(){
-  const gs=C.games.filter(g=>g.active);const ts=C.tournaments;
-  document.getElementById('admC').innerHTML=`<div class="af"><div class="aft">➕ Add Tournament</div>
-    <span class="ilbl">Game</span><select class="inp" id="tG" style="margin-bottom:8px">${gs.map(g=>`<option value="${g.id}">${g.icon} ${g.name}</option>`).join('')}</select>
-    <input class="inp" id="tN" placeholder="Tournament Name" autocomplete="off" name="tournament_name_field"/>
-    <div class="irow"><div><span class="ilbl">Entry Fee (৳)</span><input class="inp" id="tF" type="number" placeholder="50" style="margin:0" autocomplete="off"/></div><div><span class="ilbl">Max Players</span><input class="inp" id="tMx" type="number" placeholder="16" style="margin:0" autocomplete="off"/></div></div>
-    <div class="irow" style="margin-top:8px"><div><span class="ilbl">Start Time</span><input class="inp" id="tT" type="datetime-local" style="margin:0"/></div><div></div></div>
+  const gs=C.games.filter(g=>g.active);
+  const el=document.getElementById('admC');
+  // Game selector for admin
+  const selG=C.games.find(x=>x.id===admSelGId);
+  const selCat=C.categories.find(x=>x.id===admSelCatId);
+  const cats=admSelGId?C.categories.filter(c=>c.game_id===admSelGId&&c.active!==false):[];
+
+  if(!admSelGId){
+    // Show game selection
+    el.innerHTML=`<div class="sec">🎮 Select Game</div>
+    <div class="gg">${gs.map(g=>`<div class="gb" onclick="admSelGame('${g.id}')"><div class="gi">${g.icon}</div><div class="gn">${g.name}</div></div>`).join('')}</div>`;
+    return;
+  }
+  if(!admSelCatId){
+    // Show category selection + option to add tournament without category
+    el.innerHTML=`<div class="backbtn" onclick="admSelGId=null;rAdmT()">← Games</div>
+    <div class="sec">${selG?selG.icon+' '+selG.name:''} — Categories</div>
+    <div class="gg">${cats.map(c=>`<div class="gb" onclick="admSelCatId='${c.id}';rAdmT()"><div class="gi">${c.icon||'🏆'}</div><div class="gn">${c.name}</div></div>`).join('')}
+    <div class="gb" style="border-style:dashed" onclick="admSelCatId='none';rAdmT()"><div class="gi">➕</div><div class="gn" style="font-size:10px">No Category</div></div></div>`;
+    return;
+  }
+
+  // Show tournaments for this game+category
+  const catFilter=admSelCatId==='none'?null:admSelCatId;
+  let ts=C.tournaments.filter(t=>t.game_id===admSelGId&&(catFilter?t.category_id===catFilter:!t.category_id));
+  ts=ts.sort((a,b)=>new Date(a.start_time||0)-new Date(b.start_time||0));
+
+  el.innerHTML=`
+  <div class="backbtn" onclick="admSelCatId=null;rAdmT()">← Categories</div>
+  <div class="sec">${selG?selG.icon+' '+selG.name:''} ${selCat?' — '+selCat.name:''}</div>
+
+  <div class="af">
+    <div class="aft">➕ Add Tournament(s)</div>
+    <input class="inp" id="tN" placeholder="Tournament Name" autocomplete="off"/>
+    <div class="irow">
+      <div><span class="ilbl">Entry Fee (৳)</span><input class="inp" id="tF" type="number" placeholder="50" style="margin:0" autocomplete="off"/></div>
+      <div><span class="ilbl">Max Players</span><input class="inp" id="tMx" type="number" placeholder="16" style="margin:0" autocomplete="off"/></div>
+    </div>
+    <div class="irow" style="margin-top:8px">
+      <div><span class="ilbl">First Start Time</span><input class="inp" id="tT" type="datetime-local" style="margin:0"/></div>
+      <div><span class="ilbl">Prize Pool (৳)</span><input class="inp" id="tPrize" type="number" placeholder="0" style="margin:0" autocomplete="off"/></div>
+    </div>
     <textarea class="inp" id="tD" placeholder="Description..." style="margin:8px 0"></textarea>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--w)"><input type="checkbox" id="tRI" style="width:16px;height:16px"/> Require Game ID</label></div>
-    <div id="tRIBox" style="display:none;margin-bottom:8px"><span class="ilbl">Game ID Field Label</span><input class="inp" id="tRIL" placeholder="e.g. PUBG ID, Ludo Username" style="margin-bottom:0"/></div>
-    <button class="bgold" style="width:auto;padding:10px 26px" onclick="admAddT()">Add</button></div>
-  <div class="sec">Existing</div>
-  ${ts.length?ts.map(t=>{const g=C.games.find(x=>x.id===t.game_id);return`<div class="rc">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div style="flex:1"><div class="ru">${t.name}</div><div class="rd">${g?g.icon+' '+g.name:'?'} · ${t.joined?.length||0}/${t.max_players} · ৳${t.fee}</div>${t.start_time?`<div class="rd">⏰ ${new Date(t.start_time).toLocaleString()}</div>`:''}</div><span class="badge b${t.status==='live'?'l':t.status==='closed'?'c':'u'}">${t.status.toUpperCase()}</span></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--w)">
+        <input type="checkbox" id="tRI" style="width:16px;height:16px"/> Require Game ID
+      </label>
+    </div>
+    <div id="tRIBox" style="display:none;margin-bottom:8px">
+      <span class="ilbl">Game ID Field Label</span>
+      <input class="inp" id="tRIL" placeholder="e.g. PUBG ID" style="margin-bottom:0" autocomplete="off"/>
+    </div>
+    <div class="dvd"></div>
+    <div style="font-size:13px;font-weight:700;color:var(--g2);margin-bottom:8px">🔁 Bulk Create</div>
+    <div class="irow">
+      <div><span class="ilbl">Quantity (1-50)</span><input class="inp" id="tQty" type="number" placeholder="1" value="1" style="margin:0" min="1" max="50" autocomplete="off"/></div>
+      <div><span class="ilbl">Gap (minutes)</span><input class="inp" id="tGap" type="number" placeholder="0" value="0" style="margin:0" min="0" autocomplete="off"/></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;margin-top:2px">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--w)">
+        <input type="checkbox" id="tDaily"/> Daily Repeat
+      </label>
+      <span style="font-size:11px;color:var(--m)">(same time next day auto-creates)</span>
+    </div>
+    <button class="bgold" style="width:auto;padding:10px 26px" onclick="admAddT()">Add Tournament(s)</button>
+  </div>
+
+  <div class="sec">Tournaments (${ts.length})</div>
+  ${ts.length?ts.map(t=>`<div class="rc">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+      <div style="flex:1">
+        <div class="ru">${t.name}</div>
+        <div class="rd">${t.joined?.length||0}/${t.max_players} players · ৳${t.fee} entry${t.prize_pool?` · ৳${t.prize_pool} prize`:''}</div>
+        ${t.start_time?`<div class="rd">⏰ ${new Date(t.start_time).toLocaleString()}</div>`:''}
+        ${t.description?`<div class="rd" style="margin-top:4px;color:var(--m)">${t.description}</div>`:''}
+        ${t.daily_repeat?'<div class="rd" style="color:var(--g3)">🔁 Daily repeat ON</div>':''}
+      </div>
+      <span class="badge b${t.status==='live'?'l':t.status==='closed'?'c':'u'}">${t.status.toUpperCase()}</span>
+    </div>
     <div class="dvd" style="margin:8px 0"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px"><div><span class="ilbl">Room ID</span><input class="inp" id="rid_${t.id}" value="${t.room_id||''}" placeholder="Room ID" style="margin:0"/></div><div><span class="ilbl">Room Password</span><input class="inp" id="rp_${t.id}" value="${t.room_pass||''}" placeholder="Password" style="margin:0"/></div></div>
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--m)"><input type="checkbox" ${t.require_game_id?'checked':''} onchange="togRGI('${t.id}',this.checked)"/> Require Game ID</label></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+      <div><span class="ilbl">Room ID</span><input class="inp" id="rid_${t.id}" value="${t.room_id||''}" placeholder="Room ID" style="margin:0" autocomplete="off"/></div>
+      <div><span class="ilbl">Room Password</span><input class="inp" id="rp_${t.id}" value="${t.room_pass||''}" placeholder="Password" style="margin:0" autocomplete="off"/></div>
+    </div>
     <div class="raf">
-      <button class="bsm bs" onclick="saveRoom('${t.id}')">💾 Save Room</button>
-      <button class="bsm bo" onclick="togTS('${t.id}')">Toggle Status</button>
+      <button class="bsm bs" onclick="saveRoom('${t.id}')">💾 Room</button>
+      <button class="bsm bo" onclick="editT('${t.id}')">✏️ Edit</button>
+      <button class="bsm bo" onclick="togTS('${t.id}')">⟳ Status</button>
       <button class="bsm bo" onclick="viewPlayers('${t.id}')">👥 Players</button>
-      <button class="bsm bd" onclick="delT('${t.id}')">Remove</button>
-    </div></div>`;}).join(''):'<div class="empty">No tournaments</div>'}`;
-  document.getElementById('tRI').addEventListener('change',function(){document.getElementById('tRIBox').style.display=this.checked?'block':'none';});
+      <button class="bsm bd" onclick="delT('${t.id}')">🗑 Remove</button>
+    </div>
+  </div>`).join(''):'<div class="empty">No tournaments yet</div>'}`;
+
+  document.getElementById('tRI').addEventListener('change',function(){
+    document.getElementById('tRIBox').style.display=this.checked?'block':'none';
+  });
 }
+
+let admSelGId=null,admSelCatId=null;
+function admSelGame(gid){admSelGId=gid;admSelCatId=null;rAdmT();}
+
+function editT(tid){
+  const t=C.tournaments.find(x=>x.id===tid);if(!t)return;
+  document.getElementById('admC').innerHTML=`
+  <div class="backbtn" onclick="rAdmT()">← Back</div>
+  <div class="sec">✏️ Edit Tournament</div>
+  <div class="af">
+    <span class="ilbl">Name</span><input class="inp" id="etN" value="${t.name||''}" autocomplete="off"/>
+    <div class="irow">
+      <div><span class="ilbl">Entry Fee (৳)</span><input class="inp" id="etF" type="number" value="${t.fee||0}" style="margin:0" autocomplete="off"/></div>
+      <div><span class="ilbl">Max Players</span><input class="inp" id="etMx" type="number" value="${t.max_players||16}" style="margin:0" autocomplete="off"/></div>
+    </div>
+    <div class="irow" style="margin-top:8px">
+      <div><span class="ilbl">Start Time</span><input class="inp" id="etT" type="datetime-local" value="${t.start_time?t.start_time.slice(0,16):''}" style="margin:0"/></div>
+      <div><span class="ilbl">Prize Pool (৳)</span><input class="inp" id="etPrize" type="number" value="${t.prize_pool||0}" style="margin:0" autocomplete="off"/></div>
+    </div>
+    <textarea class="inp" id="etD" placeholder="Description..." style="margin:8px 0">${t.description||''}</textarea>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;color:var(--w)">
+        <input type="checkbox" id="etDaily" ${t.daily_repeat?'checked':''}/> Daily Repeat
+      </label>
+    </div>
+    <button class="bgold" style="width:auto;padding:10px 26px" onclick="saveEditT('${t.id}')">Save Changes</button>
+  </div>`;
+}
+
+async function saveEditT(tid){
+  const name=document.getElementById('etN').value.trim();
+  if(!name){toast('Name required');return;}
+  const updates={
+    name,
+    fee:parseInt(document.getElementById('etF').value)||0,
+    max_players:parseInt(document.getElementById('etMx').value)||16,
+    prize_pool:parseInt(document.getElementById('etPrize').value)||0,
+    description:document.getElementById('etD').value,
+    start_time:document.getElementById('etT').value?new Date(document.getElementById('etT').value).toISOString():null,
+    daily_repeat:document.getElementById('etDaily').checked
+  };
+  ldr(true);
+  await DB.upd('zy_tournaments','id=eq.'+tid,updates);
+  const t=C.tournaments.find(x=>x.id===tid);
+  if(t)Object.assign(t,updates);
+  ldr(false);toast('Saved!');rAdmT();
+}
+
+
 async function saveRoom(tid){const rid=document.getElementById('rid_'+tid).value.trim()||null,rp=document.getElementById('rp_'+tid).value.trim()||null;await DB.upd('zy_tournaments','id=eq.'+tid,{room_id:rid,room_pass:rp});const t=C.tournaments.find(x=>x.id===tid);if(t){t.room_id=rid;t.room_pass=rp;}toast('Saved!');}
 async function togRGI(tid,val){await DB.upd('zy_tournaments','id=eq.'+tid,{require_game_id:val});const t=C.tournaments.find(x=>x.id===tid);if(t)t.require_game_id=val;toast(val?'Game ID required ON':'Game ID required OFF');}
 async function admAddT(){
-  const name=document.getElementById('tN').value.trim(),gid=document.getElementById('tG').value;if(!name){toast('Name required');return;}
-  const needId=document.getElementById('tRI').checked,idLabel=document.getElementById('tRIL').value.trim();
-  const t={id:'T'+Date.now(),name,game_id:gid,fee:parseInt(document.getElementById('tF').value)||0,max_players:parseInt(document.getElementById('tMx').value)||16,joined:[],status:'upcoming',description:document.getElementById('tD').value,start_time:document.getElementById('tT').value?new Date(document.getElementById('tT').value).toISOString():null,winner:null,room_id:null,room_pass:null,notified:false,require_game_id:needId,game_id_label:idLabel||'Game ID',player_info:{}};
-  ldr(true);await DB.ins('zy_tournaments',t);C.tournaments.unshift(t);ldr(false);
-  ['tN','tF','tMx','tD','tRIL'].forEach(id=>document.getElementById(id).value='');document.getElementById('tRI').checked=false;document.getElementById('tRIBox').style.display='none';
-  toast('Added!');rAdmT();
+  const baseName=document.getElementById('tN').value.trim();
+  if(!baseName){toast('Name required');return;}
+  const qty=Math.min(50,Math.max(1,parseInt(document.getElementById('tQty').value)||1));
+  const gapMin=parseInt(document.getElementById('tGap').value)||0;
+  const fee=parseInt(document.getElementById('tF').value)||0;
+  const maxP=parseInt(document.getElementById('tMx').value)||16;
+  const prize=parseInt(document.getElementById('tPrize').value)||0;
+  const desc=document.getElementById('tD').value;
+  const needId=document.getElementById('tRI').checked;
+  const idLabel=document.getElementById('tRIL')?.value.trim()||'Game ID';
+  const daily=document.getElementById('tDaily').checked;
+  const baseTimeVal=document.getElementById('tT').value;
+  const catId=admSelCatId==='none'?null:admSelCatId;
+
+  ldr(true);
+  const toInsert=[];
+  for(let i=0;i<qty;i++){
+    const tName=qty>1?`${baseName} #${i+1}`:baseName;
+    let startTime=null;
+    if(baseTimeVal){
+      const d=new Date(baseTimeVal);
+      d.setMinutes(d.getMinutes()+i*gapMin);
+      startTime=d.toISOString();
+    }
+    const t={id:'T'+Date.now()+i,name:tName,game_id:admSelGId,category_id:catId,fee,max_players:maxP,prize_pool:prize,joined:[],status:'upcoming',description:desc,start_time:startTime,winner:null,room_id:null,room_pass:null,notified:false,require_game_id:needId,game_id_label:idLabel,player_info:{},daily_repeat:daily};
+    toInsert.push(t);
+  }
+  // Insert all
+  for(const t of toInsert){
+    await DB.ins('zy_tournaments',t);
+    C.tournaments.push(t);
+  }
+  ldr(false);
+  ['tN','tF','tMx','tD','tRIL','tQty','tGap'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=id==='tQty'?'1':'0'===id?'0':el.tagName==='TEXTAREA'?'':el.value;});
+  document.getElementById('tQty').value='1';
+  document.getElementById('tGap').value='0';
+  toast(qty>1?qty+' tournaments added!':'Tournament added!');
+  rAdmT();
 }
 async function togTS(tid){const t=C.tournaments.find(x=>x.id===tid);if(!t)return;t.status=t.status==='upcoming'?'live':t.status==='live'?'closed':'upcoming';await DB.upd('zy_tournaments','id=eq.'+tid,{status:t.status});rAdmT();}
 async function delT(tid){
@@ -979,10 +1199,28 @@ async function rAdmU(){
   ldr(true);const allUsers=await DB.get('zy_users','role=neq.admin&order=created_at.desc');C.users=allUsers;ldr(false);
   renderUserList();
 }
+function updateUserList(){
+  const users=C.users.filter(u=>!userSearchQ||u.name.toLowerCase().includes(userSearchQ.toLowerCase())||u.username.toLowerCase().includes(userSearchQ.toLowerCase()));
+  const el=document.getElementById('userListBody');
+  if(el) el.innerHTML=buildUserRows(users);
+}
+function buildUserRows(users){
+  return users.length?users.map(u=>{
+    const banned=u.ban_until&&(u.ban_until==='permanent'||new Date(u.ban_until)>new Date());
+    return`<div class="rc"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer" onclick="admViewU('${u.id}')">
+      <div style="display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;border-radius:50%;background:var(--g);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:#0a1228;overflow:hidden;flex-shrink:0">${u.pic?`<img src="${u.pic}" style="width:100%;height:100%;object-fit:cover"/>`:u.name[0].toUpperCase()}</div>
+      <div><div class="ru">${u.name} <span style="font-size:11px;color:var(--m)">@${u.username}</span>${banned?'<span class="ban-tag">BANNED</span>':u.previously_banned?'<span class="ban-tag">prev. banned</span>':''}</div><div class="rd">৳${u.balance}</div></div></div></div>
+      <div style="display:flex;gap:7px;margin-top:9px;flex-wrap:wrap">
+        <button class="bsm bo" onclick="admViewU('${u.id}')">Details</button>
+        <button class="bsm bban" onclick="openBanModal('${u.id}')">${banned?'Update Ban':'Ban'}</button>
+        ${banned?`<button class="bsm bs" onclick="unbanUser('${u.id}')">Unban</button>`:''}
+      </div></div>`;
+  }).join(''):'<div class="empty">No users found</div>';
+}
 function renderUserList(){
   const users=C.users.filter(u=>!userSearchQ||u.name.toLowerCase().includes(userSearchQ.toLowerCase())||u.username.toLowerCase().includes(userSearchQ.toLowerCase()));
   document.getElementById('admC').innerHTML=`<div class="sec">👥 Users</div>
-  <div class="srch-box"><input id="userSrch" placeholder="Search name or username..." value="${userSearchQ}" oninput="userSearchQ=this.value;renderUserList()"/></div>
+  <div class="srch-box"><input id="userSrch" placeholder="Search name or username..." value="${userSearchQ}" oninput="userSearchQ=this.value;updateUserList()"/></div>
   ${users.length?users.map(u=>{
     const banned=u.ban_until&&(u.ban_until==='permanent'||new Date(u.ban_until)>new Date());
     return`<div class="rc"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer" onclick="admViewU('${u.id}')">
