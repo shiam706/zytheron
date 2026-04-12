@@ -214,6 +214,18 @@ textarea.inp{resize:vertical;min-height:68px}
 <!-- LOADER -->
 <div id="ldr"><div class="spin"></div><div style="font-size:13px;color:var(--m)">Loading...</div></div>
 
+<!-- NOTE POPUP -->
+<div id="notePop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:#1a2a52;border:2px solid var(--g);border-radius:16px;padding:22px;width:100%;max-width:380px;position:relative">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div style="font-size:16px;font-weight:700;color:var(--g2)">📌 Notice</div>
+      <button onclick="closeNote()" style="background:transparent;border:none;color:var(--m);font-size:22px;cursor:pointer;line-height:1">✕</button>
+    </div>
+    <div id="noteText" style="font-size:14px;color:var(--w);line-height:1.7;white-space:pre-wrap"></div>
+    <button onclick="closeNote()" style="width:100%;padding:12px;background:var(--g2);color:#0a1228;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;margin-top:16px">Got it ✓</button>
+  </div>
+</div>
+
 <!-- INSTALL SCREEN -->
 <div id="instScr" style="display:flex">
   <div style="font-size:64px;margin-bottom:14px">🏆</div>
@@ -564,8 +576,30 @@ async function restoreSession(){
     CU=rows[0];
     if(chkBan(CU))return;
     await loadAll();
-    if(CU.role==='admin')showScr('admin');else showScr('user');
+    if(CU.role==='admin')showScr('admin');
+    else{showScr('user');checkNote();}
   }catch{localStorage.removeItem('zy_sess');ldr(false);document.getElementById('scrAuth').className='scr on';}
+}
+
+async function checkNote(){
+  // Load note from Supabase
+  try{
+    const rows=await DB.get('zy_app_settings','id=eq.note');
+    if(rows&&rows.length&&rows[0].enabled&&rows[0].value){
+      const lastSeen=localStorage.getItem('zy_note_seen');
+      const noteVal=rows[0].value;
+      if(lastSeen!==noteVal){
+        // Show note
+        document.getElementById('noteText').textContent=noteVal;
+        document.getElementById('notePop').style.display='flex';
+      }
+    }
+  }catch(e){}
+}
+function closeNote(){
+  const txt=document.getElementById('noteText').textContent;
+  localStorage.setItem('zy_note_seen',txt);
+  document.getElementById('notePop').style.display='none';
 }
 
 async function loadAll(){
@@ -682,7 +716,23 @@ function updDots(){
 }
 function startTimers(){
   if(tmrT)clearInterval(tmrT);
-  tmrT=setInterval(()=>{
+  // Re-use same interval for both data sync and timer checks
+  const _origTmr=tmrT;
+  clearInterval(_origTmr);
+  tmrT=setInterval(async()=>{
+    // Sync data
+    if(CU&&CU.role!=='admin'){
+      try{
+        const[g,t,cat]=await Promise.all([
+          DB.get('zy_games','order=sort_order'),
+          DB.get('zy_tournaments','order=start_time.asc.nullsfirst,created_at.asc'),
+          DB.get('zy_categories','order=sort_order')
+        ]);
+        C.games=g;C.tournaments=t;C.categories=cat;
+        if(selGId)renderTL(selGId,selCatId);
+        renderGG();
+      }catch(e){}
+    }
     C.tournaments.forEach(t=>{
       if(t.status==='upcoming'&&t.start_time){
         const d=new Date(t.start_time)-Date.now();
@@ -1136,7 +1186,7 @@ async function togG(gid){const g=C.games.find(x=>x.id===gid);if(g){g.active=!g.a
 async function delG(gid){await DB.del('zy_games','id=eq.'+gid);C.games=C.games.filter(x=>x.id!==gid);rAdmG();toast('Removed');}
 
 // WITHDRAWALS ADMIN
-function rAdmW(){const wds=C.withdrawals;document.getElementById('wdot').style.display=wds.some(x=>x.status==='pending')?'inline-block':'none';document.getElementById('admC').innerHTML=`<div class="sec">💸 Withdrawals</div>`+(wds.length?wds.map(w=>`<div class="rc"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div><div class="ru">${w.user_name}</div><div class="rd">📱 ${w.method}: <b style="color:var(--w)">${w.account}</b></div><div class="rd">📞 ${w.phone||'-'} · 📅 ${w.req_date}</div></div><div style="text-align:right"><div class="ra">৳${w.amount}</div><span class="badge b${w.status==='approved'?'ap':w.status==='rejected'?'rj':'p'}">${w.status.toUpperCase()}</span></div></div>${w.status==='pending'?`<div class="raf"><button class="bsm bs" onclick="appW('${w.id}')">✅ Approve</button><button class="bsm bd" onclick="rejW('${w.id}')">❌ Reject</button></div>`:''}</div>`).join(''):'<div class="empty">No requests</div>');}
+function rAdmW(){const wds=C.withdrawals;document.getElementById('wdot').style.display=wds.some(x=>x.status==='pending')?'inline-block':'none';document.getElementById('admC').innerHTML=`<div class="sec">💸 Withdrawals</div>`+(wds.length?wds.map(w=>`<div class="rc"><div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div><div class="ru">${w.user_name}</div><div class="rd">📱 ${w.method}: <b style="color:var(--w)">${w.account}</b></div><div class="rd">📞 ${w.phone||'-'} · 📅 ${w.req_date}</div></div><div style="text-align:right"><div class="ra">৳${w.amount}</div><span class="badge b${w.status==='approved'?'ap':w.status==='rejected'?'rj':'p'}">${w.status.toUpperCase()}</span></div></div>${w.status==='pending'?`<div class="raf"><button class="bsm bs" onclick="appW('${w.id}')">✅ Approve</button><button class="bsm bd" onclick="rejW('${w.id}')">❌ Reject</button></div>`:''}</div>`).join(''):'<div class="empty">No requests</div>')+rAdmWMethods();}
 async function appW(wid){const w=C.withdrawals.find(x=>x.id===wid);if(!w)return;ldr(true);w.status='approved';const ur=await DB.get('zy_users','id=eq.'+w.user_id);if(ur.length){const u=ur[0];const nb=Math.max(0,u.balance-w.amount);const txs=u.txs||[];const tx=txs.find(t=>t.type==='Withdrawal Request ('+w.method+')'&&t.status==='pending');if(tx)tx.status='approved';await DB.upd('zy_users','id=eq.'+w.user_id,{balance:nb,txs});}await DB.upd('zy_withdrawals','id=eq.'+wid,{status:'approved'});ldr(false);toast('Approved!');rAdmW();}
 async function rejW(wid){const w=C.withdrawals.find(x=>x.id===wid);if(!w)return;w.status='rejected';await DB.upd('zy_withdrawals','id=eq.'+wid,{status:'rejected'});toast('Rejected');rAdmW();}
 
@@ -1182,22 +1232,53 @@ async function rAdmU(){
   renderUserList();
 }
 function updateUserList(){
-  const users=C.users.filter(u=>!userSearchQ||u.name.toLowerCase().includes(userSearchQ.toLowerCase())||u.username.toLowerCase().includes(userSearchQ.toLowerCase()));
+  const q=userSearchQ.toLowerCase().trim();
+  let users=C.users.filter(u=>u.role!=='admin');
+  if(q){
+    // Exact username match first
+    const exact=users.filter(u=>u.username.toLowerCase()===q);
+    if(exact.length) users=exact;
+    else users=users.filter(u=>u.name.toLowerCase().includes(q)||u.username.toLowerCase().includes(q));
+  }
   const el=document.getElementById('userListBody');
   if(el) el.innerHTML=buildUserRows(users);
 }
 function buildUserRows(users){
-  return users.length?users.map(u=>{
+  if(!users.length) return '<div class="empty">No users found</div>';
+  // If exact username match, show profile directly
+  if(userSearchQ&&users.length===1){
+    const u=users[0];
+    const banned=u.ban_until&&(u.ban_until==='permanent'||new Date(u.ban_until)>new Date());
+    return`<div class="af">
+      <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
+        <div style="width:56px;height:56px;border-radius:50%;background:var(--g);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:#0a1228;overflow:hidden;flex-shrink:0">${u.pic?`<img src="${u.pic}" style="width:100%;height:100%;object-fit:cover"/>`:u.name[0].toUpperCase()}</div>
+        <div><div style="font-size:17px;font-weight:700">${u.name}${u.previously_banned?'<span class="ban-tag">prev. banned</span>':''}</div><div style="font-size:13px;color:var(--g3)">@${u.username}</div></div>
+      </div>
+      ${[['Email',u.email||'-'],['Balance','৳'+u.balance],['Joined',(u.joined||[]).length+' tournaments'],['Won',u.won||0],['Status',banned?'🚫 Banned':'✅ Active']].map(([k,v])=>`<div style="display:flex;justify-content:space-between;font-size:13px;padding:7px 0;border-bottom:1px solid #1e2a4a"><span style="color:var(--m)">${k}</span><b>${v}</b></div>`).join('')}
+      ${u.ban_reason?`<div style="font-size:12px;color:#ff8080;margin-top:8px">Ban reason: ${u.ban_reason}</div>`:''}
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <input class="inp" style="flex:1;font-size:13px;margin:0" id="adj_${u.id}" placeholder="±amount" type="number" autocomplete="off"/>
+        <button class="bsm bo" onclick="adjBal('${u.id}')">Adjust Balance</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="bsm bban" onclick="openBanModal('${u.id}')">${banned?'Update Ban':'Ban User'}</button>
+        ${banned?`<button class="bsm bs" onclick="unbanUser('${u.id}')">Unban</button>`:''}
+      </div>
+    </div>`;
+  }
+  return users.map(u=>{
     const banned=u.ban_until&&(u.ban_until==='permanent'||new Date(u.ban_until)>new Date());
     return`<div class="rc"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer" onclick="admViewU('${u.id}')">
-      <div style="display:flex;align-items:center;gap:10px"><div style="width:40px;height:40px;border-radius:50%;background:var(--g);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:#0a1228;overflow:hidden;flex-shrink:0">${u.pic?`<img src="${u.pic}" style="width:100%;height:100%;object-fit:cover"/>`:u.name[0].toUpperCase()}</div>
-      <div><div class="ru">${u.name} <span style="font-size:11px;color:var(--m)">@${u.username}</span>${banned?'<span class="ban-tag">BANNED</span>':u.previously_banned?'<span class="ban-tag">prev. banned</span>':''}</div><div class="rd">৳${u.balance}</div></div></div></div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:40px;height:40px;border-radius:50%;background:var(--g);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;color:#0a1228;overflow:hidden;flex-shrink:0">${u.pic?`<img src="${u.pic}" style="width:100%;height:100%;object-fit:cover"/>`:u.name[0].toUpperCase()}</div>
+        <div><div class="ru">${u.name} <span style="font-size:11px;color:var(--m)">@${u.username}</span>${banned?'<span class="ban-tag">BANNED</span>':u.previously_banned?'<span class="ban-tag">prev. banned</span>':''}</div><div class="rd">৳${u.balance}</div></div>
+      </div></div>
       <div style="display:flex;gap:7px;margin-top:9px;flex-wrap:wrap">
         <button class="bsm bo" onclick="admViewU('${u.id}')">Details</button>
         <button class="bsm bban" onclick="openBanModal('${u.id}')">${banned?'Update Ban':'Ban'}</button>
         ${banned?`<button class="bsm bs" onclick="unbanUser('${u.id}')">Unban</button>`:''}
       </div></div>`;
-  }).join(''):'<div class="empty">No users found</div>';
+  }).join('');
 }
 function renderUserList(){
   const users=C.users.filter(u=>!userSearchQ||u.name.toLowerCase().includes(userSearchQ.toLowerCase())||u.username.toLowerCase().includes(userSearchQ.toLowerCase()));
