@@ -500,13 +500,10 @@ let installPromptReady = false;
 window.addEventListener('beforeinstallprompt', function(e) {
   e.preventDefault();
   dPr = e;
+  // Chrome will show its own install UI - we don't force our screen
 });
 
-window.addEventListener('appinstalled', () => {
-  // App installed - go straight to session
-  document.getElementById('instScr').style.display = 'none';
-  restoreSession();
-});
+window.addEventListener('appinstalled', function() { dPr = null; });
 
 function doInstall() {
   if (dPr) {
@@ -533,28 +530,9 @@ function skipInstall() {
 }
 
 function initApp() {
-  var el = document.getElementById('instScr');
-  if (el) el.style.display = 'none';
+  var instEl = document.getElementById('instScr');
+  if (instEl) instEl.style.display = 'none';
   restoreSession();
-}
-  if (isIOS) {
-    // iOS - show Safari share instructions
-    document.getElementById('iosInst').style.display = 'block';
-  } else {
-    // Android/desktop - show install button
-    // beforeinstallprompt may not have fired yet, show button with fallback
-    document.getElementById('andInst').style.display = 'block';
-    // Wait a bit for beforeinstallprompt - if it fires, button updates automatically
-    // If not (already installed / not installable), show manual instructions after 2.5s
-    setTimeout(() => {
-      if (!installPromptReady && !isSA()) {
-        const b = document.getElementById('andInst');
-        if (b && document.getElementById('instScr').style.display !== 'none') {
-          b.innerHTML = '<div style="font-size:13px;color:var(--m);line-height:2.2;background:#0d1b3e;border-radius:10px;padding:14px;text-align:left">Chrome menu (⋮) চাপো<br>→ <b style="color:var(--g2)">&quot;Add to Home screen&quot;</b><br>→ <b style="color:var(--g2)">&quot;Add&quot;</b> ✅</div><button onclick="skipInstall()" style="width:100%;padding:12px;background:transparent;color:var(--m);border:1px solid #2a3d70;border-radius:10px;font-size:14px;cursor:pointer;margin-top:10px">Skip & Open App</button>';
-        }
-      }
-    }, 2500);
-  }
 }
 
 if (document.readyState === 'loading') {
@@ -625,9 +603,9 @@ async function doLogin(){
   ldr(false);
   const user=rows.find(x=>x.pass===p);
   if(!user){LA.count++;const err=document.getElementById('loginErr');
-    if(LA.count>=3){LA.until=Date.now()+LOCKS[Math.min(LA.count-3,LOCKS.length-1)];saveLA();err.textContent='Wrong credentials. Try again later.';err.style.display='block';startCd(LA.until);}
+    if(LA.count>=3){LA.until=Date.now()+LOCKS[Math.min(LA.count-3,LOCKS.length-1)];saveLA();saveLA();err.textContent='Wrong credentials. Try again later.';err.style.display='block';startCd(LA.until);}
     else{err.textContent='Wrong username or password.';err.style.display='block';}saveLA();return;}
-  LA={count:0,until:0};saveLA();
+  LA={count:0,until:0};saveLA();saveLA();
   document.getElementById('loginErr').style.display='none';
   document.getElementById('loginCd').style.display='none';
   document.getElementById('loginBtn').disabled=false;
@@ -850,7 +828,7 @@ function cmpImg(src,mx,q){return new Promise(res=>{const i=new Image();i.onload=
 // ── PROFILE
 async function renderProfile(){const f=await DB.get('zy_users','id=eq.'+CU.id);if(f?.length)CU=f[0];const av=document.getElementById('profAv');if(CU.pic)av.innerHTML=`<img src="${CU.pic}"/><div class="cov">📷</div>`;else av.innerHTML=`<span>${CU.name[0].toUpperCase()}</span><div class="cov">📷</div>`;document.getElementById('profName').textContent=CU.name;document.getElementById('profUname').textContent='@'+CU.username;document.getElementById('stJ').textContent=(CU.joined||[]).length;document.getElementById('stW').textContent=CU.won||0;document.getElementById('stB').textContent=CU.balance;}
 async function chgPic(input){const file=input.files[0];if(!file)return;const r=new FileReader();r.onload=async e=>{const c=await cmpImg(e.target.result,200,.75);await DB.upd('zy_users','id=eq.'+CU.id,{pic:c});CU.pic=c;renderProfile();updTB();toast('Profile pic updated!');};r.readAsDataURL(file);input.value='';}
-function doShare(){const url='https://tournament89.github.io/zytheron';if(navigator.share)navigator.share({title:'Zytheron',text:'Join Zytheron! 🏆',url});else if(navigator.clipboard){navigator.clipboard.writeText(url);toast('Link copied!');}else toast(url);}
+function doShare(){const url = 'https://tournament89.github.io/zytheron';if(navigator.share)navigator.share({title:'Zytheron',text:'Join Zytheron! 🏆',url});else if(navigator.clipboard){navigator.clipboard.writeText(url);toast('Link copied!');}else toast(url);}
 
 // ── PAGE SWITCHER
 async function showPg(p){
